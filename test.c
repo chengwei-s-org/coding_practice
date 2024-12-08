@@ -16,67 +16,67 @@ void move_cursor(int row, int col)
     wprintf(L"\033[%d;%dH", row, col);
 }
 
-void print_shape_I(void)
+void print_shape_I(int row, int col)
 {
-    move_cursor(15, 30);
+    move_cursor(row, col);
     wprintf(L"%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
-    move_cursor(16, 30);
+    move_cursor(row + 1, col);
     wprintf(L"%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
-    move_cursor(17, 30);
+    move_cursor(row + 2, col);
     wprintf(L"%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
-    move_cursor(18, 30);
+    move_cursor(row + 3, col);
     wprintf(L"%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
 }
 
-void print_shape_O(void)
+void print_shape_O(int row, int col)
 {
-    move_cursor(15, 30);
+    move_cursor(row, col);
     wprintf(L"%lc%lc%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
-    move_cursor(16, 30);
+    move_cursor(row + 1, col);
     wprintf(L"%lc%lc%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
 }
 
-void print_shape_T(void)
+void print_shape_T(int row, int col)
 {
-    move_cursor(15, 30);
+    move_cursor(row, col);
     wprintf(L"%lc%lc%lc%lc%lc%lc\n", BRICK, BRICK, BRICK, BRICK, BRICK, BRICK);
-    move_cursor(16, 30);
+    move_cursor(row + 1, col);
     wprintf(L"  %lc%lc  \n", BRICK, BRICK);
 }
 
-void print_shape_L(void)
+void print_shape_L(int row, int col)
 {
-    move_cursor(15, 30);
+    move_cursor(row, col);
     wprintf(L"%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
-    move_cursor(16, 30);
+    move_cursor(row + 1, col);
     wprintf(L"%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
-    move_cursor(17, 30);
+    move_cursor(row + 2, col);
     wprintf(L"%lc%lc%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
 }
 
-void print_shape_J(void)
+void print_shape_J(int row, int col)
 {
-    move_cursor(15, 30);
+    move_cursor(row, col);
     wprintf(L"  %lc%lc\n", BRICK, BRICK, BRICK, BRICK);
-    move_cursor(16, 30);
+    move_cursor(row + 1, col);
     wprintf(L"  %lc%lc\n", BRICK, BRICK, BRICK, BRICK);
-    move_cursor(17, 30);
+    move_cursor(row + 2, col);
     wprintf(L"%lc%lc%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
 }
 
-void print_shape_Z(void)
+void print_shape_Z(int row, int col)
 {
-    move_cursor(15, 30);
+    move_cursor(row, col);
     wprintf(L"  %lc%lc%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
-    move_cursor(16, 30);
+    move_cursor(row + 1, col);
     wprintf(L"%lc%lc%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
 }
 
-void print_shape_S(void)
+void print_shape_S(int row, int col)
 {
-    move_cursor(15, 30);
+    move_cursor(row, col);
     wprintf(L"%lc%lc%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
-    move_cursor(16, 30);
+    move_cursor(row + 1, col);
     wprintf(L"  %lc%lc%lc%lc\n", BRICK, BRICK, BRICK, BRICK);
 }
 
@@ -92,32 +92,34 @@ void clear_next_area(void)
     }
 }
 
-void show_next_area(void)
+int show_next_area(void)
 {
     int random_number = rand() % 7;
     switch (random_number) {
         case 0:
-            print_shape_I();
+            print_shape_I(15, 30);
             break;
         case 1:
-            print_shape_O();
+            print_shape_O(15, 30);
             break;
         case 2:
-            print_shape_T();
+            print_shape_T(15, 30);
             break;
         case 3:
-            print_shape_L();
+            print_shape_L(15, 30);
             break;
         case 4:
-            print_shape_J();
+            print_shape_J(15, 30);
             break;
         case 5:
-            print_shape_Z();
+            print_shape_Z(15, 30);
             break;
         default:
-            print_shape_S();
+            print_shape_S(15, 30);
             break;
     }
+
+    return random_number;
 }
 
 void print_site(void)
@@ -148,13 +150,15 @@ void clear_line(int s, int e)
 }
 
 int main() {
+    int next_block_index = 0;
+
     setlocale(LC_ALL, "");
     clear_line(1, 30);
     print_site();
     srand(time(NULL));
     while(1)
     {
-        show_next_area();
+        next_block_index = show_next_area();
         sleep(2);
         clear_next_area();
     }
