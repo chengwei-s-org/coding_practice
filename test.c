@@ -275,7 +275,7 @@ void game_timer_handler(int sig)  //timer handler function, process when game ti
         col_position_temp = block_col_position;
         space_index_temp = space_index;
         command_input = getchar();
-        if (command_input == 27) {  // ESC
+        if (command_input == 27) {  // get ESC
             arrow_input = getchar();  // get '['
             if (arrow_input == '[') {
                 direction_input = getchar();  // get position value
