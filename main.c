@@ -11,7 +11,7 @@
 
 #define BRICK   0x2593
 #define WALL    0x2588
-#define BLANK   0X20
+#define BLANK   0X20   
 
 #define LINE_SIZE   37
 
