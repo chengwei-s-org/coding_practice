@@ -1,5 +1,5 @@
 tetris:tetris.c
-	gcc -o tetris tetris.c
+	gcc -o tetris tetris.c -lrt
 
 .PHONY:clean
 clean:
