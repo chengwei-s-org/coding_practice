@@ -1,18 +1,25 @@
 
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <locale.h>
 #include <wchar.h>
+#include <ncurses.h>
 #include <time.h>
-// #include <ncurses.h>
-#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <string.h>
+#include <sys/time.h>
+#include <sys/select.h>
+#include <signal.h>
 
 #define BRICK   0x2593
 #define FRAME   0x2588
 
 #define SITE_W 20
 #define SITE_H 20
-#define SHOW_W 18
+#define SHOW_W 19
 #define FRAME_W 2
 #define SHAPE_W 4
 #define SITE_BOUNDARY FRAME_W + SITE_W + FRAME_W
@@ -21,6 +28,11 @@
 
 #define NEXT_SHAPE_POSX SITE_BOUNDARY + SHOW_W / 2 - SHAPE_W + 1
 #define NEXT_SHAPE_POSY SITE_H / 2 + SITE_H / 4 - 1
+
+#define BOTTOM_X -1
+#define TOP_X -2
+#define SIDE_X -3
+#define SUCCESS 1
 
 enum Shape
 {
@@ -34,235 +46,446 @@ enum Shape
     SHAPE_NUM
 };
 
+struct Point
+{
+    int posx;
+    int posy;
+} ;
+struct Point point_tetris_tl = {0, 0};
+struct Point point_tetris_br = {TETRISW, TETRISH};
+
 struct Blocks
 {
     int shapes[SHAPE_W][SHAPE_W];
-}blocks[SHAPE_NUM][4] = 
+    int row;
+    int col;
+} blocks[SHAPE_NUM][4] =
     {
-        { //I
-            {0, 0, 0, 0,
-             1, 1, 1, 1,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 0, 0,
-             0, 1, 0, 0,
-             0, 1, 0, 0,
-             0, 1, 0, 0},
-            {0, 0, 0, 0,
-             1, 1, 1, 1,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 0, 0,
-             0, 1, 0, 0,
-             0, 1, 0, 0,
-             0, 1, 0, 0},
+        {
+            {
+                // I
+                {0, 0, 0, 0,
+                1, 1, 1, 1,
+                0, 0, 0, 0,
+                0, 0, 0, 0}, 1, 4,
+            },
+            {
+                {0, 1, 0, 0,
+                0, 1, 0, 0,
+                0, 1, 0, 0,
+                0, 1, 0, 0},4,1,
+            },
+            {
+                {0, 0, 0, 0,
+                1, 1, 1, 1,
+                0, 0, 0, 0,
+                0, 0, 0, 0},1,4,
+            },
+            {
+                {0, 1, 0, 0,
+                0, 1, 0, 0,
+                0, 1, 0, 0,
+                0, 1, 0, 0},4,1,
+            },
         },
-        { //O
-            {0, 1, 1, 0,
-             0, 1, 1, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 1, 0,
-             0, 1, 1, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 1, 0,
-             0, 1, 1, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 1, 0,
-             0, 1, 1, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
+        {
+            {
+                // O
+                {0, 1, 1, 0,
+                0, 1, 1, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,2,
+            },
+            {
+                {0, 1, 1, 0,
+                0, 1, 1, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,2,
+            },
+            {
+                {0, 1, 1, 0,
+                0, 1, 1, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,2,
+            },
+            {
+                {0, 1, 1, 0,
+                0, 1, 1, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,2,
+            },
         },
-        { //T
-            {0, 1, 0, 0,
-             1, 1, 1, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 0, 0,
-             1, 1, 0, 0,
-             0, 1, 0, 0,
-             0, 0, 0, 0},
-            {0, 0, 0, 0,
-             1, 1, 1, 0,
-             0, 1, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 0, 0,
-             0, 1, 1, 0,
-             0, 1, 0, 0,
-             0, 0, 0, 0},
+        {
+            {
+                // T
+                {0, 1, 0, 0,
+                1, 1, 1, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,3,
+            },
+            {
+                {0, 1, 0, 0,
+                1, 1, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 0, 0},3,2,
+            },
+            {
+                {0, 0, 0, 0,
+                1, 1, 1, 0,
+                0, 1, 0, 0,
+                0, 0, 0, 0},2,3,
+            },
+            {
+                {0, 1, 0, 0,
+                0, 1, 1, 0,
+                0, 1, 0, 0,
+                0, 0, 0, 0},3,2,
+            },
         },
-        { //L
-            {0, 0, 1, 0,
-             1, 1, 1, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {1, 1, 0, 0,
-             0, 1, 0, 0,
-             0, 1, 0, 0,
-             0, 0, 0, 0},
-            {1, 1, 1, 0,
-             1, 0, 0, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {1, 0, 0, 0,
-             1, 0, 0, 0,
-             1, 1, 0, 0,
-             0, 0, 0, 0},
+        {
+            {
+                // L
+                {0, 0, 1, 0,
+                1, 1, 1, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,3,
+            },
+            {
+                {1, 1, 0, 0,
+                0, 1, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 0, 0},3,2,
+            },
+            {
+                {1, 1, 1, 0,
+                1, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,3,
+            },
+            {
+                {1, 0, 0, 0,
+                1, 0, 0, 0,
+                1, 1, 0, 0,
+                0, 0, 0, 0},3,2,
+            },
         },
-        { //J
-            {1, 0, 0, 0,
-             1, 1, 1, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 0, 0,
-             0, 1, 0, 0,
-             1, 1, 0, 0,
-             0, 0, 0, 0},
-            {1, 1, 1, 0,
-             0, 0, 1, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {1, 1, 0, 0,
-             1, 0, 0, 0,
-             1, 0, 0, 0,
-             0, 0, 0, 0},
+        {
+            {
+                // J
+                {1, 0, 0, 0,
+                1, 1, 1, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,3,
+            },
+            {
+                {0, 1, 0, 0,
+                0, 1, 0, 0,
+                1, 1, 0, 0,
+                0, 0, 0, 0},3,2,
+            },
+            {
+                {1, 1, 1, 0,
+                0, 0, 1, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,3,
+            },
+            {
+                {1, 1, 0, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+                0, 0, 0, 0},3,2,
+            },
         },
-        { //Z
-            {1, 1, 0, 0,
-             0, 1, 1, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 0, 0,
-             1, 1, 0, 0,
-             1, 0, 0, 0,
-             0, 0, 0, 0},
-            {1, 1, 0, 0,
-             0, 1, 1, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 0, 0,
-             1, 1, 0, 0,
-             1, 0, 0, 0,
-             0, 0, 0, 0},
+        {
+            {
+                // Z
+                {1, 1, 0, 0,
+                0, 1, 1, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,3,
+            },
+            {
+                {0, 1, 0, 0,
+                1, 1, 0, 0,
+                1, 0, 0, 0,
+                0, 0, 0, 0},3,2,
+            },
+            {
+                {1, 1, 0, 0,
+                0, 1, 1, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,3,
+            },
+            {
+                {0, 1, 0, 0,
+                1, 1, 0, 0,
+                1, 0, 0, 0,
+                0, 0, 0, 0},3,2,
+            },
         },
-        { //S
-            {0, 1, 1, 0,
-             1, 1, 0, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {1, 0, 0, 0,
-             1, 1, 0, 0,
-             0, 1, 0, 0,
-             0, 0, 0, 0},
-            {0, 1, 1, 0,
-             1, 1, 0, 0,
-             0, 0, 0, 0,
-             0, 0, 0, 0},
-            {1, 0, 0, 0,
-             1, 1, 0, 0,
-             0, 1, 0, 0,
-             0, 0, 0, 0},
+        {
+            {
+                // S
+                {0, 1, 1, 0,
+                1, 1, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,3,
+            },
+            {
+                {1, 0, 0, 0,
+                1, 1, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 0, 0},3,2,
+            },
+            {
+                {0, 1, 1, 0,
+                1, 1, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0},2,3,
+            },
+            {
+                {1, 0, 0, 0,
+                1, 1, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 0, 0},3,2,
+            }
         }
     };
 
-static int score = 0;
-static int collision = 0;
-int tetrisArea[TETRISH][TETRISW] = {0};
+struct termios original_tty; //全局变量用于保存原始的termios设置
+int tetris_area[TETRISH][TETRISW] = {0};
+int timer_flag = 0;
 
-void init_blocks(void);
-void shape_rotate(int ishape, int irotate);
 void move_cursor(int row, int col);
+void print_score(int score);
+void print_tetris_area(struct Point *top_left, struct Point *bottom_right);
 void init_site(void);
-void print_score();
-void print_tetris_area();
 void clear_line(int s, int e);
 void clear_area(int startrow, int endrow, int startcolumn, int endcolumn);
-void unfill_shape(struct Blocks *block, int posx, int posy);
-void fill_shape(struct Blocks *block, int posx, int posy);
+void unfill_shape(struct Blocks *block, struct Point *point);
+void fill_shape(struct Blocks *block, struct Point *point);
+int check_collision(struct Blocks *block, struct Point *point);
+void set_raw_mode(int fd);
+void set_nonblocking(int fd);
+void restore_original_mode(int fd);
+void timer_handler(int signum, siginfo_t *si, void *uc);
+void handle_key(char *buffer, int len);
+
 
 int main() 
 {
+
     int ishape = rand() % SHAPE_NUM;
     int irotate = rand() % 4;
     int ishape_next = 0;
     int irotate_next = 0;
-    int posx = 0;
-    int posy = 0;
+    int irotate_old = 0;
+    int score = 0;
+    int collision = 0;
     int end = 0;
-    setlocale(LC_ALL, "");
-    clear_line(1, SITE_H+10);
-    init_site();
-    print_tetris_area();
-    print_score();
-    init_blocks();
-    while(1)
-    {
-        posy = 0;
-        posx = SITE_W/2-SHAPE_W/2;
-        fill_shape(&blocks[ishape][irotate], posx, posy);
-        if (collision == -2)
-        {
-            break;
-        }
-        // Print next shape
-        unfill_shape(&blocks[ishape_next][irotate_next], NEXT_SHAPE_POSX, NEXT_SHAPE_POSY);
-        ishape_next = rand() % SHAPE_NUM;
-        irotate_next = rand() % 4;
-        fill_shape(&blocks[ishape_next][irotate_next], NEXT_SHAPE_POSX, NEXT_SHAPE_POSY);
+    int refresh = 0;
+    struct Point point = {0, 0};
+    struct Point point_old = {0, 0};
+    struct Point point_next = {NEXT_SHAPE_POSX, NEXT_SHAPE_POSY};
 
-        while (1)
+    char ch;
+    struct sigaction sa;
+    struct sigevent sev;
+    struct itimerspec its;
+    struct timeval timeout;
+    timer_t timerid;
+    fd_set readfds;
+    char buffer[10]; // 缓冲区大小需要足够大以容纳方向键的序列（通常是3个字节）
+    int len;
+    int stdin_fd = fileno(stdin);
+
+ 
+    // 设置信号处理程序
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = timer_handler;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGRTMIN, &sa, NULL) == -1) {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
+ 
+    // 创建定时器
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo = SIGRTMIN;
+    sev.sigev_value.sival_ptr = &timerid;
+    if (timer_create(CLOCK_REALTIME, &sev, &timerid) == -1) {
+        perror("timer_create");
+        exit(EXIT_FAILURE);
+    }
+ 
+    struct termios tty;
+    if (tcgetattr(stdin_fd, &tty) != 0) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+    original_tty = tty; // 保存原始的termios设置
+ 
+    // 设置定时器为每秒触发一次
+    its.it_value.tv_sec = 1;
+    its.it_value.tv_nsec = 0;
+    its.it_interval.tv_sec = 1;
+    its.it_interval.tv_nsec = 0;
+    if (timer_settime(timerid, 0, &its, NULL) == -1) {
+        perror("timer_settime");
+        exit(EXIT_FAILURE);
+    }
+
+    FD_ZERO(&readfds);
+    FD_SET(stdin_fd, &readfds);
+    timeout.tv_sec = 1; // 设置select的超时时间为1秒，与定时器间隔相匹配
+    timeout.tv_usec = 0;
+
+    setlocale(LC_ALL, "");
+    clear_line(1, SITE_H+2);
+    init_site();
+    print_tetris_area(&point_tetris_tl, &point_tetris_br);
+    print_score(score);
+
+
+    while (1)
+    {
+        point_old = point;
+        irotate_old = irotate;
+        // 设置终端为非阻塞和原始模式
+        // set_nonblocking(stdin_fd);
+        set_raw_mode(stdin_fd);
+        if ((len = read(stdin_fd, buffer, sizeof(buffer) - 1)) > 0)
         {
-            print_tetris_area();
-            sleep(1);
-            unfill_shape(&blocks[ishape][irotate], posx, posy);
-            posy++;
-            fill_shape(&blocks[ishape][irotate], posx, posy);
-            if (collision == -1)
+            buffer[len] = '\0';
+            // 处理输入
+            if (len == 3 && buffer[0] == 27 && buffer[1] == 91) //Esc,[
             {
+                switch (buffer[2])
+                {
+                case 65: // Arrow Up:A
+                    irotate = (irotate+1)%4;
+                    break;
+                case 66: // Arrow Down:B
+                    point.posy++;
+                    break;
+                case 68: // Arrow Left:D
+                    point.posx = point.posx-2;
+                    break;
+                case 67: // Arrow Right:C
+                    point.posx = point.posx+2;
+                    break;
+                default:
+                    break;
+                }
+                unfill_shape(&blocks[ishape][irotate_old], &point_old);
+                collision = check_collision(&blocks[ishape][irotate], &point);
+                if (collision == SUCCESS)
+                {
+                    fill_shape(&blocks[ishape][irotate], &point);
+                    point_old = point;
+                    irotate_old = irotate;
+                    refresh = 1;
+                }
+                else
+                {
+                    fill_shape(&blocks[ishape][irotate_old], &point_old);
+                }
+            }
+            else if (len == 1 && buffer[0] == 27) //Esc
+            {
+                restore_original_mode(stdin_fd);
+                break;
+            }
+        }
+        restore_original_mode(stdin_fd);
+
+        if (timer_flag == 1)
+        {
+            if (collision == BOTTOM_X || collision == 0)
+            {
+                // Print next shape
+                unfill_shape(&blocks[ishape_next][irotate_next], &point_next);
+                ishape_next = rand() % SHAPE_NUM;
+                irotate_next = rand() % 4;
+                fill_shape(&blocks[ishape_next][irotate_next], &point_next);
                 ishape = ishape_next;
                 irotate = irotate_next;
-                break;
+
+                point.posy = 2-blocks[ishape][irotate].row;
+                point.posx = SITE_W / 2 - SHAPE_W / 2;
+                collision = check_collision(&blocks[ishape][irotate], &point);
+                if (collision == SUCCESS)
+                {
+                    fill_shape(&blocks[ishape][irotate], &point);
+                    refresh = 1;
+                    point_old = point;
+                    irotate_old = irotate;
+                }
+                else if (collision == BOTTOM_X)
+                {
+                    break;
+                }
             }
-            if (collision == -2)
+            else
             {
-                break;
+                unfill_shape(&blocks[ishape][irotate_old], &point_old);
+                point.posy++;
+                collision = check_collision(&blocks[ishape][irotate], &point);
+                if (collision == SUCCESS)
+                {
+                    unfill_shape(&blocks[ishape][irotate], &point_old);
+                    fill_shape(&blocks[ishape][irotate], &point);
+                    point_old = point;
+                    irotate_old = irotate;
+                    refresh = 1;
+                }
+                else
+                {
+                    fill_shape(&blocks[ishape][irotate_old], &point_old);
+                }
+                // int retval = select(stdin_fd, &readfds, NULL, NULL, &timeout);
+                // if (retval == -1)
+                // {
+                //     perror("select");
+                //     break;
+                // }
+                // else if (retval == 0)
+                // {
+                //     // 超时，没有数据可读，可能是定时器触发了
+                //     // 这里不需要做特别处理，因为定时器信号处理程序会处理定时器事件
+                // }
+                // else
+                // {
+                //     // 有数据可读，检查键盘输入
+                //     char c;
+                //     if ((len = read(stdin_fd, buffer, sizeof(buffer) - 1)) > 0)
+                //     {
+                //         // 确保缓冲区以null字符结尾，以便安全地打印字符串
+                //         buffer[len] = '\0';
+                //         // 处理输入
+                //         handle_key(buffer, len);
+                //     }
+                //     if (len == -1)
+                //     {
+                //         perror("read");
+                //     }
+                // }
             }
+            timer_flag = 0;
         }
-        if (collision == -2)
+        if (refresh == 1)
         {
-            break;
+            print_tetris_area(&point_tetris_tl, &point_tetris_br);
+            refresh = 0;
         }
     }
-    print_tetris_area();
+    print_tetris_area(&point_tetris_tl, &point_tetris_br);
     getchar(); //End pause
-    // pause();
+    // 删除定时器（实际上在程序退出前不会执行到这一步）
+    timer_delete(timerid);
+    // 恢复终端设置
+    // atexit(restore_original_mode);
     return 0;
-}
-
-void init_blocks(void) 
-{
-    // int ishape = 0;
-    // int irotate = 1;
-    // for (ishape = 0; ishape < SHAPE_NUM; ishape++)
-    // {
-    //     for (irotate = 1; irotate < 4; irotate++)
-    //         shape_rotate(ishape, irotate);
-    // }
-}
-
-void shape_rotate(int ishape, int irotate)
-{
-    int i = 0;
-    int j = 0;
-    for (i = 0; i < SHAPE_W; i++)
-    {
-        for (j = 0; j < SHAPE_W; j++)
-        {
-            blocks[ishape][irotate].shapes[i][j] = blocks[ishape][irotate-1].shapes[j][3-i];
-        }
-    }
 }
 
 void move_cursor(int row, int col)
@@ -275,52 +498,64 @@ void init_site(void)
     int i = 0;
     for (i = 0; i < TETRISW; i++)
     {
-        tetrisArea[0][i] = 1;
-        tetrisArea[TETRISH-1][i] = 1;
+        tetris_area[0][i] = 1;
+        tetris_area[TETRISH-1][i] = 1;
     }
     for (i = 0; i < TETRISH; i++)
     {
-        tetrisArea[i][0] = 1;
-        tetrisArea[i][1] = 1;
-        tetrisArea[i][SITE_BOUNDARY - 2] = 1;
-        tetrisArea[i][SITE_BOUNDARY - 1] = 1;
-        tetrisArea[i][TETRISW - 2] = 1;
-        tetrisArea[i][TETRISW - 1] = 1;
+        tetris_area[i][0] = 1;
+        tetris_area[i][1] = 1;
+        tetris_area[i][SITE_BOUNDARY - 2] = 1;
+        tetris_area[i][SITE_BOUNDARY - 1] = 1;
+        tetris_area[i][TETRISW - 2] = 1;
+        tetris_area[i][TETRISW - 1] = 1;
     }
 
     for (i = 0; i < SHOW_W; i++)
-        tetrisArea[SITE_H / 2 - 1][SITE_BOUNDARY + i] = 1;
+        tetris_area[SITE_H / 2 - 1][SITE_BOUNDARY + i] = 1;
 }
 
-void print_score()
+void load_site(int load[TETRISH][TETRISW] , int temp[TETRISH][TETRISW]){
+    int i = 0;
+    int j = 0;
+    for (i = 0; i < TETRISH; i++)
+    {
+        for (j = 0; i < TETRISW; j++)
+        {
+            load[i][j] = temp[i][j];
+        }
+    }
+}
+
+void print_score(int score)
 {
-    move_cursor(SITE_H / 4, SITE_BOUNDARY + SHOW_W / 2 - 2);
+    move_cursor(SITE_H / 4, SITE_BOUNDARY + SHOW_W / 2 - 1);
     wprintf(L"score\n");
 
-    move_cursor(SITE_H / 4 + 1, SITE_BOUNDARY + SHOW_W / 2 - 2);
+    move_cursor(SITE_H / 4 + 1, SITE_BOUNDARY + SHOW_W / 2 - 1);
     wprintf(L"%d\n", score);
     wprintf(L"\033[%d;%dH\n", SITE_H + 3, 1);
 }
 
-void print_tetris_area()
+void print_tetris_area(struct Point *top_left, struct Point *bottom_right)
 {
     int i = 0;
     int j = 0;
-    move_cursor(1, 1);
-    for (i = 0; i < TETRISH; i++)
+    move_cursor(top_left->posx+1, top_left->posy+1);
+    for (i = top_left->posy; i < bottom_right->posy; i++) //y
     {
-        for (j = 0; j < TETRISW; j++)
+        for (j = top_left->posx; j < bottom_right->posx; j++) //x
         {
             if (i > 0 && i < SITE_H / 2 - 1 && j >= SITE_BOUNDARY && j < TETRISW - 2)
             {
-                // if (j = TETRISW - 3)
-                // {
+                if (j = TETRISW - 3)
+                {
                     move_cursor(i+1, TETRISW - 1);
-                // }
+                }
             }
             else
             {
-                if (tetrisArea[i][j] == 1)
+                if (tetris_area[i][j] == 1)
                 {
                     wprintf(L"%lc", BRICK);
                 }
@@ -356,7 +591,7 @@ void clear_area(int startrow, int endrow, int startcolumn, int endcolumn)
     wprintf(L"\033[%d;%dH", startrow, startcolumn);
 }
 
-void unfill_shape(struct Blocks *block,int posx, int posy) 
+void unfill_shape(struct Blocks *block, struct Point *point) 
 {
     int i = 0;
     int j = 0;
@@ -364,47 +599,141 @@ void unfill_shape(struct Blocks *block,int posx, int posy)
     {
         for (j = 0; j < SHAPE_W; j++)
         {
-            if (block->shapes[i][j] == 1 && posy+i != 0 && posy+i != TETRISH-1)
+            if (block->shapes[i][j] == 1 && point->posy+i != 0 && point->posy+i != TETRISH-1)
             {
-                tetrisArea[posy+i][posx+2*j] = 0;
-                tetrisArea[posy+i][posx+2*j+1] = 0;
+                tetris_area[point->posy+i][point->posx+2*j] = 0;
+                tetris_area[point->posy+i][point->posx+2*j+1] = 0;
             }
         }
     }
 }
 
-void fill_shape(struct Blocks *block, int posx, int posy)
+void fill_shape(struct Blocks *block, struct Point *point)
 {
     int i = 0;
     int j = 0;
-    for (i = SHAPE_W-1; i >= 0; i--)
+    int mark[SHAPE_W][SHAPE_W] = {0};
+    for (i = SHAPE_W - 1; i >= 0; i--)
     {
         for (j = 0; j < SHAPE_W; j++)
         {
             if (block->shapes[i][j] == 1)
             {
-                if (tetrisArea[posy + i][posx + 2 * j] == 1) // Check collision
+                //val = block->shapes[i][j] || tetris_area[point->posy + i][point->posx + 2 * j];
+                tetris_area[point->posy + i][point->posx + 2 * j] = 1;
+                tetris_area[point->posy + i][point->posx + 2 * j + 1] = 1;
+            }
+        }
+    }
+}
+
+int check_collision(struct Blocks *block, struct Point *point)
+{
+    int i = 0;
+    int j = 0;
+
+    for (i = SHAPE_W-1; i >= 0; i--)
+    {
+        for (j = 0; j < SHAPE_W; j++)
+        {
+            if (block->shapes[i][j] && tetris_area[point->posy + i][point->posx + 2 * j] == 1)
+            {
+                if (point->posy + i != 0)
                 {
-                    // if (posy + i == 0)
-                    // {
-                    //     collision = -2; // Top collision
-                    //     return;
-                    // }else{
-                        collision = -1; // Bottom collision
-                        return;
-                    // }
+                    return BOTTOM_X;
                 }
-                else
+                if (point->posx + 2 * j <= 1 || point->posx + 2 * j >= SITE_BOUNDARY - 2)
                 {
-                    tetrisArea[posy + i][posx + 2 * j] = 1;
-                    tetrisArea[posy + i][posx + 2 * j + 1] = 1;
+                    return SIDE_X;
                 }
             }
         }
     }
-    collision = 0;
-    return;
+    return SUCCESS;
 }
 
+// 定时器信号处理程序
+void timer_handler(int signum, siginfo_t *si, void *uc)
+{
+    timer_flag = 1;
+}
 
+// 设置终端为非阻塞模式
+void set_nonblocking(int fd)
+{
+    int flags;
+    if ((flags = fcntl(fd, F_GETFL, 0)) == -1 ||
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+    {
+        perror("fcntl");
+        exit(EXIT_FAILURE);
+    }
+}
 
+// 设置终端为原始模式（无回显、无行缓冲）
+void set_raw_mode(int fd)
+{
+    struct termios tty;
+    if (tcgetattr(fd, &tty) != 0)
+    {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+    original_tty = tty; // 保存原始的termios设置
+    cfmakeraw(&tty);
+    tty.c_lflag &= ~(ICANON | ECHO); // 禁用规范模式和回显
+    tty.c_iflag |= ICRNL;
+    tty.c_cc[VMIN] = 1;  // 设置最小读取字符数
+    tty.c_cc[VTIME] = 0; // 设置读取超时时间为0
+    // 设置后重新设置终端属性
+    if (tcsetattr(fd, TCSANOW, &tty) != 0)
+    {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+}
+
+// 恢复原始终端设置的回调函数
+void restore_original_mode(int fd)
+{
+    int stdin_fd = fileno(stdin);
+    if (tcsetattr(stdin_fd, TCSANOW, &original_tty) != 0)
+    {
+        perror("tcsetattr (restore)");
+    }
+}
+
+// 处理方向键输入的函数
+void handle_key(char *buffer, int len)
+{
+    if (len == 3 && buffer[0] == 0x00 && buffer[1] == 0x00)
+    {
+        switch (buffer[2])
+        {
+        case 0x48: // Arrow Up
+            
+            break;
+        case 0x50: // Arrow Down
+            
+            break;
+        case 0x4B: // Arrow Left
+            
+            break;
+        case 0x4D: // Arrow Right
+            
+            break;
+        default:
+            
+            break;
+        }
+    }
+    else
+    {
+        // 对于非方向键的输入，这里只是简单地打印出来
+        // 注意：在原始模式下，输入会立即发送到程序，包括特殊字符和控制字符
+        for (int i = 0; i < len; i++)
+        {
+            // printf("Key pressed: %c (ASCII: %d)\n", buffer[i] >= 32 && buffer[i] <= 126 ? buffer[i] : '.', buffer[i]);
+        }
+    }
+}
