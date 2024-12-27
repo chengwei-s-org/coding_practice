@@ -22,6 +22,11 @@
 #define GAME_AREA_CENTER_COLOUN 5
 #define NEXT_AREA_ROW 11
 #define NEXT_AREA_COLOUN 14
+#define GAME_POS_ROW 23
+#define GAME_POS_COLOUN 12
+#define SCORE_POS_ROW 4
+#define SCORE_POS_COLOUN 13
+
 
 #define UP 65 //direction: up
 #define DOWN 66 //direction: dowm
@@ -46,10 +51,31 @@ int next_block_index = 0;
 int block_row_position = 1;
 int block_col_position = GAME_AREA_CENTER_COLOUN;
 int space_index = 0;
-int bottom_position = GAME_AREA_ROW - 1;  //temporary condition and parameter. waiting for further design.
+int game_score = 0;
 
+int game_area_sign[GAME_POS_ROW][GAME_POS_COLOUN] = {0};  //for further design
 
-int game_area_sign[GAME_AREA_ROW][GAME_AREA_COLOUN] = {0};  //for further design
+void move_cursor(int row, int col);
+void DrawSpace(int shape, int form, int x, int y);
+void DrawBlock(int shape, int form, int x, int y);
+void get_next_shape_of_current_block(struct Block *src, struct Block *dest);
+void InitBlockInfo();
+void clear_next_area();
+int show_next_area(int shpae_index);
+void print_site();
+void put_game_area_side_into_sign();
+void clear_line(int s, int e);
+void set_stdin_nonblocking();
+void reset_terminal_mode();
+int check_keyboard_hit();
+void command_process(char command_input);
+void save_block_message(int block_index, int space_index, int block_row_position, int block_col_position);
+void update_game_score();
+void gameover_judgement();
+int score_and_gameover_judgement();
+void game_timer_handler(int sig);
+
+int legal_judgement(int block_index, int space_index, int block_row_position, int block_col_position);
 
 void move_cursor(int row, int col) 
 {
@@ -58,13 +84,15 @@ void move_cursor(int row, int col)
 
 void DrawSpace(int shape, int form, int x, int y)
 {
-	for (int i = 0; i < 4; i++)
+    int i = 0;
+    int j = 0;
+	for (i = 0; i < 4; i++)
 	{
-		for (int j = 0; j < 4; j++)
+		for (j = 0; j < 4; j++)
 		{
 			if (block_to_shape[shape][form].shape_to_space[i][j] == 1) //if need to clean block_to_shape of a position, move cursor to it.
 			{
-				move_cursor(x + i, 2 * (y + j) - 1);
+				move_cursor(x + i, 2 * (y + j) + 1);
 				wprintf(L"  ");
 			}
 		}
@@ -73,20 +101,22 @@ void DrawSpace(int shape, int form, int x, int y)
 
 void DrawBlock(int shape, int form, int x, int y)
 {
-	for (int i = 0; i < 4; i++)
+    int i = 0;
+    int j = 0;
+	for (i = 0; i < 4; i++)
 	{
-		for (int j = 0; j < 4; j++)
+		for (j = 0; j < 4; j++)
 		{
 			if (block_to_shape[shape][form].shape_to_space[i][j] == 1) //if need to draw block_to_shape of a position, move cursor to it.
 			{
-				move_cursor(x + i, 2 * (y + j) - 1);
+				move_cursor(x + i, 2 * (y + j) + 1);
 				wprintf(L"%lc%lc", BRICK, BRICK);
 			}
 		}
 	}
 }
 
-void Get_next_form(struct Block *src, struct Block *dest)
+void get_next_shape_of_current_block(struct Block *src, struct Block *dest)
 {
     int i = 0;
     int j = 0;
@@ -136,14 +166,14 @@ void InitBlockInfo()
 	{
 		for (int form = 0; form < 3; form++) //4 shapes
 		{
-			Get_next_form(&block_to_shape[shape][form], &block_to_shape[shape][form+1]);
+			get_next_shape_of_current_block(&block_to_shape[shape][form], &block_to_shape[shape][form+1]);
 		}
 	}
 }
 
 
 
-void clear_next_area(void)
+void clear_next_area()
 {
     for (int i = UP_AREA_ROW + 3; i < GAME_AREA_ROW; i++)
     {
@@ -158,7 +188,7 @@ int show_next_area(int shpae_index)
     DrawBlock(shpae_index, 0, NEXT_AREA_ROW, NEXT_AREA_COLOUN);
 }
 
-void print_site(void)  //print all areas
+void print_site()  //print all areas
 {
     int i = 0;
     for (i = 0; i < ALL_AREA_COLOUN; i++)
@@ -175,7 +205,25 @@ void print_site(void)  //print all areas
     for (i = 0; i < ALL_AREA_COLOUN; i++)
         wprintf(L"%lc", FRAME);
     wprintf(L"\n");
+    
+    put_game_area_side_into_sign();
 }
+
+void put_game_area_side_into_sign()
+{
+    int i = 0;
+    for (i = 0; i < GAME_POS_COLOUN; i++)
+    {
+        game_area_sign[0][i] = 1;
+        game_area_sign[GAME_POS_ROW][i] = 1;
+    }
+    for (i = 1; i < GAME_POS_ROW; i++)
+    {
+        game_area_sign[i][0] = 1;
+        game_area_sign[i][GAME_POS_COLOUN - 1] = 1;
+    }
+}
+
 
 void clear_line(int s, int e)
 {
@@ -199,7 +247,8 @@ void set_stdin_nonblocking()  // set stdin as nonblocking to ensure input comman
 }
 
 
-void reset_terminal_mode() {  // recover terminal to std mode
+void reset_terminal_mode() 
+{  // recover terminal to std mode
     struct termios term;
     tcgetattr(STDIN_FILENO, &term);
     term.c_lflag |= (ICANON | ECHO);  // open buffer and echo
@@ -207,7 +256,7 @@ void reset_terminal_mode() {  // recover terminal to std mode
 }
 
 
-int check_keyboard_hit(void) // get keyboard input（non-blocking）
+int check_keyboard_hit() // get keyboard input（non-blocking）
 {
     struct timeval keyboard_timeval = {0, 0};  // set as 0, non-blocking
     fd_set fds;
@@ -218,29 +267,136 @@ int check_keyboard_hit(void) // get keyboard input（non-blocking）
     return ret > 0;
 }
 
+int legal_judgement(int block_index, int space_index, int block_row_position, int block_col_position)
+{
+    int i = 0;
+    int j = 0;
+	for (i = 0; i < 4; i++)
+	{
+		for (j = 0; j < 4; j++)
+		{
+			if ((block_to_shape[block_index][space_index].shape_to_space[i][j] == 1) && 
+                (game_area_sign[block_row_position + i][block_col_position + j] == 1))
+				return 0; //if next position already exist block, illegel.
+		}
+	}
+	return 1;
+}
+
 void command_process(char command_input)  // process keyboard input command(direction part)
-{ 
+{
+    int falling_down_index = 0;
     switch (command_input)
     {
         case LEFT:  // move block left 1 position
-            if (block_col_position > 2)
-                block_col_position --;
+            if (legal_judgement(block_index, space_index, block_row_position, block_col_position - 1))
+                block_col_position --;                
             break;
         case RIGHT:  // move block right 1 position
-            if (block_col_position < SIDE_AREA_COLOUN - 7)
+            if (legal_judgement(block_index, space_index, block_row_position, block_col_position + 1))
                 block_col_position ++;   
             break;
         case DOWN:  // move block to bottom
-            block_row_position = bottom_position;
+            while (legal_judgement(block_index, space_index, block_row_position + falling_down_index, block_col_position))
+                falling_down_index ++;
+            block_row_position = block_row_position + falling_down_index - 1;
             break;
         case UP:  // spin block to next shape
-            space_index = (space_index + 1) % 4;
+            if (legal_judgement(block_index, (space_index + 1) % 4, block_row_position, block_col_position + 1))
+                space_index = (space_index + 1) % 4;
         default:
             break;
     }
 
 }
 
+void save_block_message(int block_index, int space_index, int block_row_position, int block_col_position)
+{
+    for (int i = 0; i < 4; i++)
+	{
+		for (int j = 0; j < 4; j++)
+		{
+			if (block_to_shape[block_index][space_index].shape_to_space[i][j] == 1)
+				game_area_sign[block_row_position + i][block_col_position + j] = 1; //将该位置标记为有方块
+		}
+	}
+}
+
+void update_game_score()
+{
+    move_cursor(SCORE_POS_ROW,SCORE_POS_COLOUN * 2);
+    wprintf(L"score: %d\n", game_score);
+}
+
+void gameover_judgement()
+{
+    int j = 0;
+	for (j = 1; j < GAME_POS_COLOUN - 1; j++)
+	{
+		if (game_area_sign[1][j] == 1) //the first row contains blocks
+		{
+			move_cursor(DOWN_AREA_ROW, GAME_AREA_CENTER_COLOUN * 2);
+			wprintf(L"GAME OVER");
+            pause();
+		}
+	}
+}
+
+int score_and_gameover_judgement()
+{
+    int i = 0;
+    int j = 0;
+    int row_space_sum = 0;  
+    int row_move_index = 0;
+    int space_move_index = 0;
+	//judge get score or not
+	for (i = GAME_POS_ROW - 1; i > 0; i--)
+	{
+		row_space_sum = 0;
+		for (int j = 1; j < GAME_POS_COLOUN - 1; j ++)  //recore block num of this row
+		{
+			row_space_sum += game_area_sign[i][j];
+		}
+		if (row_space_sum == 0)
+			break;
+		if (row_space_sum == GAME_POS_COLOUN - 2) //this row contains enough blocks
+		{
+			game_score += 100;
+            update_game_score();
+			for (int j = 1; j < GAME_POS_COLOUN - 1; j++)
+			{
+				game_area_sign[i][j] = 0;
+				move_cursor(2 * j, i);
+				wprintf(L"  ");
+			}
+			//move all blocks and spaces above down falling 1 row
+			for (int row_move_index = i; row_move_index > 1; row_move_index --)
+			{
+				row_space_sum = 0;
+				for (int space_move_index = 1; space_move_index < GAME_POS_COLOUN - 1; space_move_index ++)
+				{
+					row_space_sum += game_area_sign[row_move_index - 1][space_move_index];
+					game_area_sign[row_move_index][space_move_index] = game_area_sign[row_move_index - 1][space_move_index];
+					if (game_area_sign[row_move_index][space_move_index] == 1)
+					{
+						move_cursor(row_move_index, space_move_index * 2 + 1);
+						wprintf(L"%lc%lc", BRICK, BRICK);
+					}
+					else
+					{
+						move_cursor(row_move_index, space_move_index * 2 + 1);
+						wprintf(L"  ");
+					}
+				}
+				if (row_space_sum == 0) //row move over
+					return 1;
+			}
+		}
+	}
+    gameover_judgement();
+
+	return 0;
+}
 
 void game_timer_handler(int sig)  //timer handler function, process when game timer trigger 
 {
@@ -287,9 +443,11 @@ void game_timer_handler(int sig)  //timer handler function, process when game ti
     }
 
 
-    if (block_row_position >= bottom_position)  //temporary condition and parameter. waiting for further design.
+    if (legal_judgement(block_index, space_index, block_row_position + 1, block_col_position) == 0) 
     {
-        bottom_position = bottom_position - 2;
+        game_score += 10;
+        update_game_score();
+        save_block_message(block_index, space_index, block_row_position, block_col_position);
         block_index = next_block_index;
         block_row_position = 1;
         block_col_position = GAME_AREA_CENTER_COLOUN;
@@ -298,7 +456,7 @@ void game_timer_handler(int sig)  //timer handler function, process when game ti
         clear_next_area();
         show_next_area(next_block_index);
     }
-
+    while(score_and_gameover_judgement());
     block_row_position ++;
 }
 
@@ -337,6 +495,7 @@ int main() {
     block_index = rand() % 7;
     next_block_index = rand() % 7;
     show_next_area(next_block_index);
+    update_game_score();
     while (1) {
         pause();  // Puts the program into a pending state until a signal is received
     }
