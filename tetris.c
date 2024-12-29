@@ -1,4 +1,3 @@
-
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +13,11 @@
 #include <sys/select.h>
 #include <signal.h>
 
+// 定义按键的宏
+#define KEY_ESC 27
+#define KEY_CLOSE_BRACKET 91
+
+// 方块相关的宏定义
 #define BRICK   0x2593
 #define FRAME   0x2588
 
@@ -34,6 +38,7 @@
 #define SIDE_X -3
 #define SUCCESS 1
 
+// 方块形状的枚举
 enum Shape
 {
     I_shape,
@@ -46,14 +51,17 @@ enum Shape
     SHAPE_NUM
 };
 
+// 坐标点结构体
 struct Point
 {
     int posx;
     int posy;
-} ;
+};
+
 struct Point point_tetris_tl = {0, 0};
 struct Point point_tetris_br = {TETRISW, TETRISH};
 
+// 用于表示俄罗斯方块的结构体
 struct Blocks
 {
     int shapes[SHAPE_W][SHAPE_W];
@@ -252,239 +260,105 @@ struct Blocks
         }
     };
 
-struct termios original_tty; //全局变量用于保存原始的termios设置
-int tetris_area[TETRISH][TETRISW] = {0};
-int timer_flag = 0;
+// 将形状和旋转角度相关变量封装的结构体
+struct Iblock
+{
+    int shape;
+    int rotate;
+};
 
+// 全局变量用于保存原始的termios设置
+struct termios original_tty; 
+int tetris_area[TETRISH][TETRISW] = {0};
+int score = 0;
+struct Iblock current_iblock;
+struct Iblock current_iblock_old;
+struct Iblock next_iblock;
+struct Point current_point;
+struct Point current_point_old;
+int collision = 0;
+int refresh_flag = 0;
+int end_flag = 0;
+
+// 函数声明
 void move_cursor(int row, int col);
 void print_score(int score);
 void print_tetris_area(struct Point *top_left, struct Point *bottom_right);
 void init_site(void);
 void clear_line(int s, int e);
-void clear_area(int startrow, int endrow, int startcolumn, int endcolumn);
+void clear_area(int startrow, int end_row, int startcolumn, int end_column);
 void unfill_shape(struct Blocks *block, struct Point *point);
 void fill_shape(struct Blocks *block, struct Point *point);
 int check_collision(struct Blocks *block, struct Point *point);
 void set_raw_mode(int fd);
 void set_nonblocking(int fd);
 void restore_original_mode(int fd);
-void timer_handler(int signum, siginfo_t *si, void *uc);
-void handle_key(char *buffer, int len);
+void handle_keyboard_input(char *buffer, int len);
+void setup_timer(timer_t timerid);
+void check_and_clear_lines(void);
 
 
-int main() 
+int main()
 {
-
-    int ishape = rand() % SHAPE_NUM;
-    int irotate = rand() % 4;
-    int ishape_next = 0;
-    int irotate_next = 0;
-    int irotate_old = 0;
-    int score = 0;
-    int collision = 0;
-    int end = 0;
-    int refresh = 0;
-    struct Point point = {0, 0};
-    struct Point point_old = {0, 0};
-    struct Point point_next = {NEXT_SHAPE_POSX, NEXT_SHAPE_POSY};
+    current_iblock.shape = rand() % SHAPE_NUM;
+    current_iblock.rotate = rand() % 4;
 
     char ch;
-    struct sigaction sa;
-    struct sigevent sev;
-    struct itimerspec its;
-    struct timeval timeout;
-    timer_t timerid;
-    fd_set readfds;
     char buffer[10]; // 缓冲区大小需要足够大以容纳方向键的序列（通常是3个字节）
     int len;
+
+    timer_t timerid;
+
+    struct termios tty;
+
+    fd_set readfds;
     int stdin_fd = fileno(stdin);
 
- 
-    // 设置信号处理程序
-    sa.sa_flags = SA_SIGINFO;
-    sa.sa_sigaction = timer_handler;
-    sigemptyset(&sa.sa_mask);
-    if (sigaction(SIGRTMIN, &sa, NULL) == -1) {
-        perror("sigaction");
-        exit(EXIT_FAILURE);
-    }
- 
-    // 创建定时器
-    sev.sigev_notify = SIGEV_SIGNAL;
-    sev.sigev_signo = SIGRTMIN;
-    sev.sigev_value.sival_ptr = &timerid;
-    if (timer_create(CLOCK_REALTIME, &sev, &timerid) == -1) {
-        perror("timer_create");
-        exit(EXIT_FAILURE);
-    }
- 
-    struct termios tty;
-    if (tcgetattr(stdin_fd, &tty) != 0) {
+    setup_timer(timerid);
+
+    if (tcgetattr(stdin_fd, &tty) != 0)
+    {
         perror("tcgetattr");
         exit(EXIT_FAILURE);
     }
     original_tty = tty; // 保存原始的termios设置
- 
-    // 设置定时器为每秒触发一次
-    its.it_value.tv_sec = 1;
-    its.it_value.tv_nsec = 0;
-    its.it_interval.tv_sec = 1;
-    its.it_interval.tv_nsec = 0;
-    if (timer_settime(timerid, 0, &its, NULL) == -1) {
-        perror("timer_settime");
-        exit(EXIT_FAILURE);
-    }
 
     FD_ZERO(&readfds);
     FD_SET(stdin_fd, &readfds);
+    struct timeval timeout;
     timeout.tv_sec = 1; // 设置select的超时时间为1秒，与定时器间隔相匹配
     timeout.tv_usec = 0;
 
     setlocale(LC_ALL, "");
-    clear_line(1, SITE_H+2);
+    clear_line(1, SITE_H + 2);
     init_site();
     print_tetris_area(&point_tetris_tl, &point_tetris_br);
     print_score(score);
 
-
     while (1)
     {
-        point_old = point;
-        irotate_old = irotate;
+        if (end_flag==1)
+        {
+            break;
+        }
         // 设置终端为非阻塞和原始模式
-        // set_nonblocking(stdin_fd);
         set_raw_mode(stdin_fd);
         if ((len = read(stdin_fd, buffer, sizeof(buffer) - 1)) > 0)
         {
             buffer[len] = '\0';
-            // 处理输入
-            if (len == 3 && buffer[0] == 27 && buffer[1] == 91) //Esc,[
-            {
-                switch (buffer[2])
-                {
-                case 65: // Arrow Up:A
-                    irotate = (irotate+1)%4;
-                    break;
-                case 66: // Arrow Down:B
-                    point.posy++;
-                    break;
-                case 68: // Arrow Left:D
-                    point.posx = point.posx-2;
-                    break;
-                case 67: // Arrow Right:C
-                    point.posx = point.posx+2;
-                    break;
-                default:
-                    break;
-                }
-                unfill_shape(&blocks[ishape][irotate_old], &point_old);
-                collision = check_collision(&blocks[ishape][irotate], &point);
-                if (collision == SUCCESS)
-                {
-                    fill_shape(&blocks[ishape][irotate], &point);
-                    point_old = point;
-                    irotate_old = irotate;
-                    refresh = 1;
-                }
-                else
-                {
-                    fill_shape(&blocks[ishape][irotate_old], &point_old);
-                }
-            }
-            else if (len == 1 && buffer[0] == 27) //Esc
-            {
-                restore_original_mode(stdin_fd);
-                break;
-            }
+            handle_keyboard_input(buffer, len);
         }
         restore_original_mode(stdin_fd);
 
-        if (timer_flag == 1)
-        {
-            if (collision == BOTTOM_X || collision == 0)
-            {
-                // Print next shape
-                unfill_shape(&blocks[ishape_next][irotate_next], &point_next);
-                ishape_next = rand() % SHAPE_NUM;
-                irotate_next = rand() % 4;
-                fill_shape(&blocks[ishape_next][irotate_next], &point_next);
-                ishape = ishape_next;
-                irotate = irotate_next;
-
-                point.posy = 2-blocks[ishape][irotate].row;
-                point.posx = SITE_W / 2 - SHAPE_W / 2;
-                collision = check_collision(&blocks[ishape][irotate], &point);
-                if (collision == SUCCESS)
-                {
-                    fill_shape(&blocks[ishape][irotate], &point);
-                    refresh = 1;
-                    point_old = point;
-                    irotate_old = irotate;
-                }
-                else if (collision == BOTTOM_X)
-                {
-                    break;
-                }
-            }
-            else
-            {
-                unfill_shape(&blocks[ishape][irotate_old], &point_old);
-                point.posy++;
-                collision = check_collision(&blocks[ishape][irotate], &point);
-                if (collision == SUCCESS)
-                {
-                    unfill_shape(&blocks[ishape][irotate], &point_old);
-                    fill_shape(&blocks[ishape][irotate], &point);
-                    point_old = point;
-                    irotate_old = irotate;
-                    refresh = 1;
-                }
-                else
-                {
-                    fill_shape(&blocks[ishape][irotate_old], &point_old);
-                }
-                // int retval = select(stdin_fd, &readfds, NULL, NULL, &timeout);
-                // if (retval == -1)
-                // {
-                //     perror("select");
-                //     break;
-                // }
-                // else if (retval == 0)
-                // {
-                //     // 超时，没有数据可读，可能是定时器触发了
-                //     // 这里不需要做特别处理，因为定时器信号处理程序会处理定时器事件
-                // }
-                // else
-                // {
-                //     // 有数据可读，检查键盘输入
-                //     char c;
-                //     if ((len = read(stdin_fd, buffer, sizeof(buffer) - 1)) > 0)
-                //     {
-                //         // 确保缓冲区以null字符结尾，以便安全地打印字符串
-                //         buffer[len] = '\0';
-                //         // 处理输入
-                //         handle_key(buffer, len);
-                //     }
-                //     if (len == -1)
-                //     {
-                //         perror("read");
-                //     }
-                // }
-            }
-            timer_flag = 0;
-        }
-        if (refresh == 1)
+        if (refresh_flag == 1)
         {
             print_tetris_area(&point_tetris_tl, &point_tetris_br);
-            refresh = 0;
+            refresh_flag = 0;
         }
     }
     print_tetris_area(&point_tetris_tl, &point_tetris_br);
-    getchar(); //End pause
-    // 删除定时器（实际上在程序退出前不会执行到这一步）
+    // 删除定时器
     timer_delete(timerid);
-    // 恢复终端设置
-    // atexit(restore_original_mode);
     return 0;
 }
 
@@ -499,7 +373,7 @@ void init_site(void)
     for (i = 0; i < TETRISW; i++)
     {
         tetris_area[0][i] = 1;
-        tetris_area[TETRISH-1][i] = 1;
+        tetris_area[TETRISH - 1][i] = 1;
     }
     for (i = 0; i < TETRISH; i++)
     {
@@ -513,18 +387,6 @@ void init_site(void)
 
     for (i = 0; i < SHOW_W; i++)
         tetris_area[SITE_H / 2 - 1][SITE_BOUNDARY + i] = 1;
-}
-
-void load_site(int load[TETRISH][TETRISW] , int temp[TETRISH][TETRISW]){
-    int i = 0;
-    int j = 0;
-    for (i = 0; i < TETRISH; i++)
-    {
-        for (j = 0; i < TETRISW; j++)
-        {
-            load[i][j] = temp[i][j];
-        }
-    }
 }
 
 void print_score(int score)
@@ -541,16 +403,16 @@ void print_tetris_area(struct Point *top_left, struct Point *bottom_right)
 {
     int i = 0;
     int j = 0;
-    move_cursor(top_left->posx+1, top_left->posy+1);
-    for (i = top_left->posy; i < bottom_right->posy; i++) //y
+    move_cursor(top_left->posx + 1, top_left->posy + 1);
+    for (i = top_left->posy; i < bottom_right->posy; i++) // y
     {
-        for (j = top_left->posx; j < bottom_right->posx; j++) //x
+        for (j = top_left->posx; j < bottom_right->posx; j++) // x
         {
             if (i > 0 && i < SITE_H / 2 - 1 && j >= SITE_BOUNDARY && j < TETRISW - 2)
             {
-                if (j = TETRISW - 3)
+                if (j == TETRISW - 3)
                 {
-                    move_cursor(i+1, TETRISW - 1);
+                    move_cursor(i + 1, TETRISW - 1);
                 }
             }
             else
@@ -578,20 +440,20 @@ void clear_line(int s, int e)
     wprintf(L"\033[%d;%dH", s, 1);
 }
 
-void clear_area(int startrow, int endrow, int startcolumn, int endcolumn)
+void clear_area(int startrow, int end_row, int startcolumn, int end_column)
 {
     int i, j;
-    for (i = startrow; i <= endrow; i++)
+    for (i = startrow; i <= end_row; i++)
     {
-        for (j = startcolumn; j <= endcolumn; j++)
+        for (j = startcolumn; j <= end_column; j++)
         {
             wprintf(L"\033[%d;%dH ", i, j);
-        }    
+        }
     }
     wprintf(L"\033[%d;%dH", startrow, startcolumn);
 }
 
-void unfill_shape(struct Blocks *block, struct Point *point) 
+void unfill_shape(struct Blocks *block, struct Point *point)
 {
     int i = 0;
     int j = 0;
@@ -599,10 +461,10 @@ void unfill_shape(struct Blocks *block, struct Point *point)
     {
         for (j = 0; j < SHAPE_W; j++)
         {
-            if (block->shapes[i][j] == 1 && point->posy+i != 0 && point->posy+i != TETRISH-1)
+            if (block->shapes[i][j] == 1 && point->posy + i!= 0 && point->posy + i!= TETRISH - 1)
             {
-                tetris_area[point->posy+i][point->posx+2*j] = 0;
-                tetris_area[point->posy+i][point->posx+2*j+1] = 0;
+                tetris_area[point->posy + i][point->posx + 2 * j] = 0;
+                tetris_area[point->posy + i][point->posx + 2 * j + 1] = 0;
             }
         }
     }
@@ -619,7 +481,6 @@ void fill_shape(struct Blocks *block, struct Point *point)
         {
             if (block->shapes[i][j] == 1)
             {
-                //val = block->shapes[i][j] || tetris_area[point->posy + i][point->posx + 2 * j];
                 tetris_area[point->posy + i][point->posx + 2 * j] = 1;
                 tetris_area[point->posy + i][point->posx + 2 * j + 1] = 1;
             }
@@ -632,13 +493,13 @@ int check_collision(struct Blocks *block, struct Point *point)
     int i = 0;
     int j = 0;
 
-    for (i = SHAPE_W-1; i >= 0; i--)
+    for (i = SHAPE_W - 1; i >= 0; i--)
     {
         for (j = 0; j < SHAPE_W; j++)
         {
             if (block->shapes[i][j] && tetris_area[point->posy + i][point->posx + 2 * j] == 1)
             {
-                if (point->posy + i != 0)
+                if (point->posy + i!= 0)
                 {
                     return BOTTOM_X;
                 }
@@ -650,12 +511,6 @@ int check_collision(struct Blocks *block, struct Point *point)
         }
     }
     return SUCCESS;
-}
-
-// 定时器信号处理程序
-void timer_handler(int signum, siginfo_t *si, void *uc)
-{
-    timer_flag = 1;
 }
 
 // 设置终端为非阻塞模式
@@ -674,7 +529,7 @@ void set_nonblocking(int fd)
 void set_raw_mode(int fd)
 {
     struct termios tty;
-    if (tcgetattr(fd, &tty) != 0)
+    if (tcgetattr(fd, &tty)!= 0)
     {
         perror("tcgetattr");
         exit(EXIT_FAILURE);
@@ -686,7 +541,7 @@ void set_raw_mode(int fd)
     tty.c_cc[VMIN] = 1;  // 设置最小读取字符数
     tty.c_cc[VTIME] = 0; // 设置读取超时时间为0
     // 设置后重新设置终端属性
-    if (tcsetattr(fd, TCSANOW, &tty) != 0)
+    if (tcsetattr(fd, TCSANOW, &tty)!= 0)
     {
         perror("tcsetattr");
         exit(EXIT_FAILURE);
@@ -697,43 +552,175 @@ void set_raw_mode(int fd)
 void restore_original_mode(int fd)
 {
     int stdin_fd = fileno(stdin);
-    if (tcsetattr(stdin_fd, TCSANOW, &original_tty) != 0)
+    if (tcsetattr(stdin_fd, TCSANOW, &original_tty)!= 0)
     {
         perror("tcsetattr (restore)");
     }
 }
 
-// 处理方向键输入的函数
-void handle_key(char *buffer, int len)
+// 定时器处理函数
+void timer_handler(int signum, siginfo_t *si, void *uc)
 {
-    if (len == 3 && buffer[0] == 0x00 && buffer[1] == 0x00)
+    struct Point next_point = {NEXT_SHAPE_POSX, NEXT_SHAPE_POSY};
+        if (collision == BOTTOM_X || collision == 0)
+        {
+            current_iblock.shape = next_iblock.shape;
+            current_iblock.rotate = next_iblock.rotate;
+            current_point.posy = 2 - blocks[current_iblock.shape][current_iblock.rotate].row;
+            current_point.posx = SITE_W / 2 - SHAPE_W / 2;
+
+            // 绘制下一方块
+            unfill_shape(&blocks[next_iblock.shape][next_iblock.rotate], &next_point);
+            next_iblock.shape = rand() % SHAPE_NUM;
+            next_iblock.rotate = rand() % 4;
+            fill_shape(&blocks[next_iblock.shape][next_iblock.rotate], &next_point);
+
+            collision = check_collision(&blocks[current_iblock.shape][current_iblock.rotate], &current_point);
+            if (collision == BOTTOM_X)
+            {
+                end_flag = 1;
+            }
+        }
+        else
+        {
+            unfill_shape(&blocks[current_iblock_old.shape][current_iblock_old.rotate], &current_point_old);
+            current_point.posy++;
+            collision = check_collision(&blocks[current_iblock.shape][current_iblock.rotate], &current_point);
+            if (collision != SUCCESS)
+            {
+                fill_shape(&blocks[current_iblock_old.shape][current_iblock_old.rotate], &current_point_old);
+                check_and_clear_lines();
+            }
+        }
+        if (collision == SUCCESS)
+        {
+            fill_shape(&blocks[current_iblock.shape][current_iblock.rotate], &current_point);
+            current_point_old.posx = current_point.posx;
+            current_point_old.posy = current_point.posy;
+            current_iblock_old.shape = current_iblock.shape;
+            current_iblock_old.rotate = current_iblock.rotate;
+        }
+        refresh_flag = 1;
+}
+
+// 键盘输入处理函数
+void handle_keyboard_input(char *buffer, int len)
+{
+    if (len == 3 && buffer[0] == KEY_ESC && buffer[1] == KEY_CLOSE_BRACKET)
     {
         switch (buffer[2])
         {
-        case 0x48: // Arrow Up
-            
+        case 65: // Arrow Up:A
+            current_iblock.rotate = (current_iblock_old.rotate + 1) % 4;
             break;
-        case 0x50: // Arrow Down
-            
+        case 66: // Arrow Down:B
+            current_point.posy++;
             break;
-        case 0x4B: // Arrow Left
-            
+        case 68: // Arrow Left:D
+            current_point.posx = current_point.posx - 2;
             break;
-        case 0x4D: // Arrow Right
-            
+        case 67: // Arrow Right:C
+            current_point.posx = current_point.posx + 2;
             break;
         default:
-            
             break;
         }
-    }
-    else
-    {
-        // 对于非方向键的输入，这里只是简单地打印出来
-        // 注意：在原始模式下，输入会立即发送到程序，包括特殊字符和控制字符
-        for (int i = 0; i < len; i++)
+        unfill_shape(&blocks[current_iblock_old.shape][current_iblock_old.rotate], &current_point_old);
+        collision = check_collision(&blocks[current_iblock.shape][current_iblock.rotate], &current_point);
+        if (collision == SUCCESS)
         {
-            // printf("Key pressed: %c (ASCII: %d)\n", buffer[i] >= 32 && buffer[i] <= 126 ? buffer[i] : '.', buffer[i]);
+            fill_shape(&blocks[current_iblock.shape][current_iblock.rotate], &current_point);
+            current_point_old.posx = current_point.posx;
+            current_point_old.posy = current_point.posy;
+            current_iblock_old.shape = current_iblock.shape;
+            current_iblock_old.rotate = current_iblock.rotate;
+            refresh_flag = 1;
+        }
+        else
+        {
+            fill_shape(&blocks[current_iblock_old.shape][current_iblock_old.rotate], &current_point_old);
+        }
+    }
+    else if (len == 1 && buffer[0] == KEY_ESC)
+    {
+        restore_original_mode(fileno(stdin));
+        end_flag = 1;
+    }
+}
+
+// 创建定时器、设置定时器、绑定定时器处理函数
+void setup_timer(timer_t timerid)
+{
+    struct sigaction sa;
+    struct sigevent sev;
+    struct itimerspec its;
+
+    // 设置信号处理程序
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = timer_handler;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGRTMIN, &sa, NULL) == -1)
+    {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
+
+    // 创建定时器
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo = SIGRTMIN;
+    sev.sigev_value.sival_ptr = &timerid;
+    if (timer_create(CLOCK_REALTIME, &sev, &timerid) == -1)
+    {
+        perror("timer_create");
+        exit(EXIT_FAILURE);
+    }
+
+    // 设置定时器为每秒触发一次
+    its.it_value.tv_sec = 1;
+    its.it_value.tv_nsec = 0;
+    its.it_interval.tv_sec = 1;
+    its.it_interval.tv_nsec = 0;
+    if (timer_settime(timerid, 0, &its, NULL) == -1)
+    {
+        perror("timer_settime");
+        exit(EXIT_FAILURE);
+    }
+}
+
+// 检查并消除满行
+void check_and_clear_lines(void)
+{
+    int i, j, k;
+    int clear_count = 0;
+    for (i = 1; i <= SITE_H; i++)
+    {
+        int is_full = 1;
+        for (j = FRAME_W; j < SITE_BOUNDARY - 2; j++)
+        {
+            if (tetris_area[i][j] == 0)
+            {
+                is_full = 0;
+                break;
+            }
+        }
+        if (is_full)
+        {
+            clear_count++;
+            for (k = i; k > 1; k--)
+            {
+                for (j = FRAME_W; j < SITE_BOUNDARY - 2; j++)
+                {
+                    tetris_area[k][j] = tetris_area[k - 1][j];
+                }
+            }
+            for (j = FRAME_W; j < SITE_BOUNDARY - 2; j++)
+            {
+                tetris_area[1][j] = 0;
+            }
+            // 分数增加，消除1行数增加1分
+            score++;
+            print_score(score);
+            i--;
         }
     }
 }
