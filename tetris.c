@@ -33,7 +33,7 @@
 #define NEXT_SHAPE_POSX SITE_BOUNDARY + SHOW_W / 2 - SHAPE_W + 1
 #define NEXT_SHAPE_POSY SITE_H / 2 + SITE_H / 4 - 1
 
-#define BOTTOM_X -1
+#define BOTTOM_X -4
 #define TOP_X -2
 #define SIDE_X -3
 #define SUCCESS 1
@@ -267,18 +267,21 @@ struct Iblock
     int rotate;
 };
 
-// 全局变量用于保存原始的termios设置
-struct termios original_tty; 
+struct termios original_tty; // 全局变量用于保存原始的termios设置
 int tetris_area[TETRISH][TETRISW] = {0};
+struct Update_block
+{
+    struct Iblock iblock;
+    struct Point point;
+    struct Iblock iblock_old;
+    struct Point point_old;
+    struct Iblock next_iblock;
+} update_b;
 int score = 0;
-struct Iblock current_iblock;
-struct Iblock current_iblock_old;
-struct Iblock next_iblock;
-struct Point current_point;
-struct Point current_point_old;
-int collision = 0;
+int collision = -1;
 int refresh_flag = 0;
 int end_flag = 0;
+int flicker_ready = 0;
 
 // 函数声明
 void move_cursor(int row, int col);
@@ -286,7 +289,8 @@ void print_score(int score);
 void print_tetris_area(struct Point *top_left, struct Point *bottom_right);
 void init_site(void);
 void clear_line(int s, int e);
-void clear_area(int startrow, int end_row, int startcolumn, int end_column);
+void clear_area(int start_row, int end_row, int start_column, int end_column);
+void fill_area(int start_row, int end_row, int start_column, int end_column);
 void unfill_shape(struct Blocks *block, struct Point *point);
 void fill_shape(struct Blocks *block, struct Point *point);
 int check_collision(struct Blocks *block, struct Point *point);
@@ -295,13 +299,24 @@ void set_nonblocking(int fd);
 void restore_original_mode(int fd);
 void handle_keyboard_input(char *buffer, int len);
 void setup_timer(timer_t timerid);
-void check_and_clear_lines(void);
-
+void check_and_clear_lines(int* res);
+void relpace_block(int i);
+void flicker_line(int* res);
+int getscore();
+void setscore(int n);
+int getcollision();
+void setcollision(int n);
+int getrefresh_flag();
+void setrefresh_flag(int n);
+int getend_flag();
+void setend_flag(int n);
+int getflicker_ready();
+void setflicker_ready(int n);
 
 int main()
 {
-    current_iblock.shape = rand() % SHAPE_NUM;
-    current_iblock.rotate = rand() % 4;
+    update_b.next_iblock.shape = rand() % SHAPE_NUM;
+    update_b.next_iblock.rotate = rand() % 4;
 
     char ch;
     char buffer[10]; // 缓冲区大小需要足够大以容纳方向键的序列（通常是3个字节）
@@ -333,11 +348,11 @@ int main()
     clear_line(1, SITE_H + 2);
     init_site();
     print_tetris_area(&point_tetris_tl, &point_tetris_br);
-    print_score(score);
+    print_score(getscore());
 
     while (1)
     {
-        if (end_flag==1)
+        if (getend_flag()==1)
         {
             break;
         }
@@ -350,10 +365,10 @@ int main()
         }
         restore_original_mode(stdin_fd);
 
-        if (refresh_flag == 1)
+        if (getrefresh_flag() == 1)
         {
             print_tetris_area(&point_tetris_tl, &point_tetris_br);
-            refresh_flag = 0;
+            setrefresh_flag(0);
         }
     }
     print_tetris_area(&point_tetris_tl, &point_tetris_br);
@@ -440,17 +455,30 @@ void clear_line(int s, int e)
     wprintf(L"\033[%d;%dH", s, 1);
 }
 
-void clear_area(int startrow, int end_row, int startcolumn, int end_column)
+void clear_area(int start_row, int end_row, int start_column, int end_column)
 {
     int i, j;
-    for (i = startrow; i <= end_row; i++)
+    for (i = start_row; i <= end_row; i++)
     {
-        for (j = startcolumn; j <= end_column; j++)
+        for (j = start_column; j <= end_column; j++)
         {
             wprintf(L"\033[%d;%dH ", i, j);
         }
     }
-    wprintf(L"\033[%d;%dH", startrow, startcolumn);
+    wprintf(L"\033[%d;%dH\n", SITE_H + 3, 1);
+}
+
+void fill_area(int start_row, int end_row, int start_column, int end_column)
+{
+    int i, j;
+    for (i = start_row; i <= end_row; i++)
+    {
+        for (j = start_column; j <= end_column; j++)
+        {
+            wprintf(L"\033[31m\033[%d;%dH%lc", i, j,BRICK);
+        }
+    }
+    wprintf(L"\033[30m\033[%d;%dH\n", SITE_H + 3, 1);
 }
 
 void unfill_shape(struct Blocks *block, struct Point *point)
@@ -501,7 +529,7 @@ int check_collision(struct Blocks *block, struct Point *point)
             {
                 if (point->posy + i!= 0)
                 {
-                    return BOTTOM_X;
+                     return TRUE;
                 }
                 if (point->posx + 2 * j <= 1 || point->posx + 2 * j >= SITE_BOUNDARY - 2)
                 {
@@ -510,7 +538,7 @@ int check_collision(struct Blocks *block, struct Point *point)
             }
         }
     }
-    return SUCCESS;
+     return FALSE;
 }
 
 // 设置终端为非阻塞模式
@@ -561,90 +589,103 @@ void restore_original_mode(int fd)
 // 定时器处理函数
 void timer_handler(int signum, siginfo_t *si, void *uc)
 {
+    int collision;
+    int res[2] = {0};
     struct Point next_point = {NEXT_SHAPE_POSX, NEXT_SHAPE_POSY};
-        if (collision == BOTTOM_X || collision == 0)
+    if (getflicker_ready() == 1 || getflicker_ready() == 0)
+    {
+        if (getcollision() == TRUE || getcollision() == -1)
         {
-            current_iblock.shape = next_iblock.shape;
-            current_iblock.rotate = next_iblock.rotate;
-            current_point.posy = 2 - blocks[current_iblock.shape][current_iblock.rotate].row;
-            current_point.posx = SITE_W / 2 - SHAPE_W / 2;
+            update_b.iblock.shape = update_b.next_iblock.shape;
+            update_b.iblock.rotate = update_b.next_iblock.rotate;
+            update_b.point.posy = 2 - blocks[update_b.iblock.shape][update_b.iblock.rotate].row;
+            update_b.point.posx = SITE_W / 2 - SHAPE_W / 2;
 
             // 绘制下一方块
-            unfill_shape(&blocks[next_iblock.shape][next_iblock.rotate], &next_point);
-            next_iblock.shape = rand() % SHAPE_NUM;
-            next_iblock.rotate = rand() % 4;
-            fill_shape(&blocks[next_iblock.shape][next_iblock.rotate], &next_point);
-
-            collision = check_collision(&blocks[current_iblock.shape][current_iblock.rotate], &current_point);
-            if (collision == BOTTOM_X)
+            unfill_shape(&blocks[update_b.next_iblock.shape][update_b.next_iblock.rotate], &next_point);
+            update_b.next_iblock.shape = rand() % SHAPE_NUM;
+            update_b.next_iblock.rotate = rand() % 4;
+            fill_shape(&blocks[update_b.next_iblock.shape][update_b.next_iblock.rotate], &next_point);
+            collision = check_collision(&blocks[update_b.iblock.shape][update_b.iblock.rotate], &update_b.point);
+            setcollision(collision);
+            if (getcollision() == TRUE)
             {
-                end_flag = 1;
+                setend_flag(1); //Game over
             }
         }
         else
         {
-            unfill_shape(&blocks[current_iblock_old.shape][current_iblock_old.rotate], &current_point_old);
-            current_point.posy++;
-            collision = check_collision(&blocks[current_iblock.shape][current_iblock.rotate], &current_point);
-            if (collision != SUCCESS)
+            unfill_shape(&blocks[update_b.iblock_old.shape][update_b.iblock_old.rotate], &update_b.point_old);
+            update_b.point.posy++;
+            collision = check_collision(&blocks[update_b.iblock.shape][update_b.iblock.rotate], &update_b.point);
+            setcollision(collision);
+            if (getcollision() != FALSE)
             {
-                fill_shape(&blocks[current_iblock_old.shape][current_iblock_old.rotate], &current_point_old);
-                check_and_clear_lines();
+                fill_shape(&blocks[update_b.iblock_old.shape][update_b.iblock_old.rotate], &update_b.point_old);
+                check_and_clear_lines(res);
             }
         }
-        if (collision == SUCCESS)
+        if (getcollision() == FALSE)
         {
-            fill_shape(&blocks[current_iblock.shape][current_iblock.rotate], &current_point);
-            current_point_old.posx = current_point.posx;
-            current_point_old.posy = current_point.posy;
-            current_iblock_old.shape = current_iblock.shape;
-            current_iblock_old.rotate = current_iblock.rotate;
+            fill_shape(&blocks[update_b.iblock.shape][update_b.iblock.rotate], &update_b.point);
+            update_b.point_old.posx = update_b.point.posx;
+            update_b.point_old.posy = update_b.point.posy;
+            update_b.iblock_old.shape = update_b.iblock.shape;
+            update_b.iblock_old.rotate = update_b.iblock.rotate;
         }
-        refresh_flag = 1;
+    }
+    if (res[1] != 0)
+    {
+        setflicker_ready(-1);
+        flicker_line(res);
+    }
+    setrefresh_flag(1);
 }
 
 // 键盘输入处理函数
 void handle_keyboard_input(char *buffer, int len)
 {
+    int collision;
     if (len == 3 && buffer[0] == KEY_ESC && buffer[1] == KEY_CLOSE_BRACKET)
     {
         switch (buffer[2])
         {
         case 65: // Arrow Up:A
-            current_iblock.rotate = (current_iblock_old.rotate + 1) % 4;
+            update_b.iblock.rotate = (update_b.iblock_old.rotate + 1) % 4;
             break;
         case 66: // Arrow Down:B
-            current_point.posy++;
+            update_b.point.posy++;
             break;
         case 68: // Arrow Left:D
-            current_point.posx = current_point.posx - 2;
+            update_b.point.posx = update_b.point.posx - 2;
             break;
         case 67: // Arrow Right:C
-            current_point.posx = current_point.posx + 2;
+            update_b.point.posx = update_b.point.posx + 2;
             break;
         default:
             break;
         }
-        unfill_shape(&blocks[current_iblock_old.shape][current_iblock_old.rotate], &current_point_old);
-        collision = check_collision(&blocks[current_iblock.shape][current_iblock.rotate], &current_point);
-        if (collision == SUCCESS)
+        unfill_shape(&blocks[update_b.iblock_old.shape][update_b.iblock_old.rotate], &update_b.point_old);
+        collision = check_collision(&blocks[update_b.iblock.shape][update_b.iblock.rotate], &update_b.point);
+        setcollision(collision);
+        if (getcollision() == FALSE)
         {
-            fill_shape(&blocks[current_iblock.shape][current_iblock.rotate], &current_point);
-            current_point_old.posx = current_point.posx;
-            current_point_old.posy = current_point.posy;
-            current_iblock_old.shape = current_iblock.shape;
-            current_iblock_old.rotate = current_iblock.rotate;
-            refresh_flag = 1;
+            fill_shape(&blocks[update_b.iblock.shape][update_b.iblock.rotate], &update_b.point);
+            update_b.point_old.posx = update_b.point.posx;
+            update_b.point_old.posy = update_b.point.posy;
+            update_b.iblock_old.shape = update_b.iblock.shape;
+            update_b.iblock_old.rotate = update_b.iblock.rotate;
+            setrefresh_flag(1);
         }
         else
         {
-            fill_shape(&blocks[current_iblock_old.shape][current_iblock_old.rotate], &current_point_old);
+            fill_shape(&blocks[update_b.iblock_old.shape][update_b.iblock_old.rotate], &update_b.point_old);
         }
     }
     else if (len == 1 && buffer[0] == KEY_ESC)
     {
         restore_original_mode(fileno(stdin));
-        end_flag = 1;
+        setend_flag(1);
     }
 }
 
@@ -688,10 +729,12 @@ void setup_timer(timer_t timerid)
 }
 
 // 检查并消除满行
-void check_and_clear_lines(void)
+void check_and_clear_lines(int* res)
 {
-    int i, j, k;
-    int clear_count = 0;
+    int i, j;
+    int score;
+    int n = 0;
+    int start = 0;
     for (i = 1; i <= SITE_H; i++)
     {
         int is_full = 1;
@@ -705,22 +748,105 @@ void check_and_clear_lines(void)
         }
         if (is_full)
         {
-            clear_count++;
-            for (k = i; k > 1; k--)
+            if (n==0)
             {
-                for (j = FRAME_W; j < SITE_BOUNDARY - 2; j++)
-                {
-                    tetris_area[k][j] = tetris_area[k - 1][j];
-                }
+                start = i;
             }
-            for (j = FRAME_W; j < SITE_BOUNDARY - 2; j++)
-            {
-                tetris_area[1][j] = 0;
-            }
+            n++;
+            relpace_block(i);
             // 分数增加，消除1行数增加1分
-            score++;
-            print_score(score);
             i--;
         }
     }
+    score = getscore() + (n + 1)*n/2;
+    setscore(score);
+    print_score(score);
+    res[0] = start;
+    res[1] = n;
 }
+
+void relpace_block(int i)
+{
+    int k, j;
+    for (k = i; k > 1; k--)
+    {
+        for (j = FRAME_W; j < SITE_BOUNDARY - 2; j++)
+        {
+            tetris_area[k][j] = tetris_area[k - 1][j];
+        }
+    }
+    for (j = FRAME_W; j < SITE_BOUNDARY - 2; j++)
+    {
+        tetris_area[1][j] = 0;
+    }
+}
+
+void flicker_line(int* res)
+{
+    int i;
+    int nflicker = 3;
+    int start_row, end_row, start_column, end_column;
+    start_row = res[0]+1;
+    end_row = res[0]+res[1];
+    start_column = 3;
+    end_column = FRAME_W + SITE_W;
+    for (i = nflicker; i > 0; i--)
+    {
+        clear_area(start_row, end_row, start_column, end_column);
+        usleep(200000);
+        fill_area(start_row, end_row, start_column, end_column);
+        usleep(200000);
+    }
+    flicker_ready = 1;
+}
+
+int getscore()
+{
+    return score;
+}
+
+void setscore(int n)
+{
+    score = n;
+}
+
+int getcollision()
+{
+    return collision;
+}
+
+void setcollision(int n)
+{
+    collision = n;
+}
+
+int getrefresh_flag()
+{
+    return refresh_flag;
+}
+
+void setrefresh_flag(int n)
+{
+    refresh_flag = n;
+}
+
+int getend_flag()
+{
+    return end_flag;
+}
+
+void setend_flag(int n)
+{
+    end_flag = n;
+}
+
+int getflicker_ready()
+{
+    return flicker_ready;
+}
+
+void setflicker_ready(int n)
+{
+    flicker_ready = n;
+}
+
