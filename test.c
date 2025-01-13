@@ -74,13 +74,13 @@ void reset_terminal_mode();
 
 /*game operation functions*/
 int check_keyboard_hit();
-void command_process(char command_input);
+void command_process(char command_input, int *block_index, int *space_index, int *block_row_position, int *block_col_position);
 void save_block_message(int block_index, int space_index, int block_row_position, int block_col_position);
 void update_game_score(int score);
 void gameover_judgement();
 int score_and_gameover_judgement();
 void game_timer_handler(int sig);
-void command_input_and_process_in_time();
+void command_input_and_process_in_time(int *block_index, int *space_index, int *block_row_position, int *block_col_position);
 int legal_judgement(int block_index, int space_index, int block_row_position, int block_col_position);
 
 void move_cursor(int row, int col) 
@@ -289,27 +289,27 @@ int legal_judgement(int block_index, int space_index, int block_row_position, in
 	return 1;
 }
 
-void command_process(char command_input)  // process keyboard input command(direction part)
+void command_process(char command_input, int *block_index, int *space_index, int *block_row_position, int *block_col_position)  // process keyboard input command(direction part)
 {
     int falling_down_index = 0;
     switch (command_input)
     {
         case LEFT:  // move block left 1 position
-            if (legal_judgement(block_index, space_index, block_row_position, block_col_position - 1))
-                block_col_position --;                
+            if (legal_judgement(*block_index, *space_index, *block_row_position, (*block_col_position) - 1))
+                *block_col_position = *block_col_position - 1;                
             break;
         case RIGHT:  // move block right 1 position
-            if (legal_judgement(block_index, space_index, block_row_position, block_col_position + 1))
-                block_col_position ++;   
+            if (legal_judgement(*block_index, *space_index, *block_row_position, (*block_col_position) + 1))
+                *block_col_position = *block_col_position + 1;   
             break;
         case DOWN:  // move block to bottom
-            while (legal_judgement(block_index, space_index, block_row_position + falling_down_index, block_col_position))
+            while (legal_judgement(*block_index, *space_index, *block_row_position + falling_down_index, *block_col_position))
                 falling_down_index ++;
-            block_row_position = block_row_position + falling_down_index - 1;
+            *block_row_position = *block_row_position + falling_down_index - 1;
             break;
         case UP:  // spin block to next shape
-            if (legal_judgement(block_index, (space_index + 1) % 4, block_row_position, block_col_position + 1))
-                space_index = (space_index + 1) % 4;
+            if (legal_judgement(*block_index, (*space_index + 1) % 4, *block_row_position, *block_col_position + 1))
+                *space_index = (*space_index + 1) % 4;
         default:
             break;
     }
@@ -459,7 +459,7 @@ void game_timer_handler(int sig)  //timer handler function, process when game ti
     block_row_position ++;
 }
 
-void command_input_and_process_in_time()
+void command_input_and_process_in_time(int *block_index, int *space_index, int *block_row_position, int *block_col_position)
 {
     // define command process
     int row_position_temp = 0;
@@ -471,19 +471,19 @@ void command_input_and_process_in_time()
 
     while (check_keyboard_hit())     // if input, read all inputs
     {
-        row_position_temp = block_row_position;
-        col_position_temp = block_col_position;
-        space_index_temp = space_index;
+        row_position_temp = *block_row_position;
+        col_position_temp = *block_col_position;
+        space_index_temp = *space_index;
         command_input = getchar();
         if (command_input == 27) {  // get ESC
             arrow_input = getchar();  // get '['
             if (arrow_input == '[') {
                 direction_input = getchar();  // get position value
-                command_process(direction_input);  // process position value
+                command_process(direction_input, block_index, space_index, block_row_position, block_col_position);  // process position value
                 }
         }
-        DrawSpace(block_index, space_index_temp, row_position_temp, col_position_temp);
-        DrawBlock(block_index, space_index, block_row_position, block_col_position);
+        DrawSpace(*block_index, space_index_temp, row_position_temp, col_position_temp);
+        DrawBlock(*block_index, *space_index, *block_row_position, *block_col_position);
     }
 }
 
@@ -523,7 +523,7 @@ int main() {
     show_next_area(next_block_index);
     update_game_score(game_score);
     while (1) {
-        command_input_and_process_in_time();
+        command_input_and_process_in_time(&block_index, &space_index, &block_row_position, &block_col_position);
     }
 
     reset_terminal_mode();
