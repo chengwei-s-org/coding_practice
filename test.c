@@ -48,16 +48,20 @@ struct Block
 
 int block_index = 0;
 int next_block_index = 0;
+int space_index = 0;
 int block_row_position = 1;
 int block_col_position = GAME_AREA_CENTER_COLOUN;
-int space_index = 0;
+
 int game_score = 0;
 
-int game_area_sign[GAME_POS_ROW][GAME_POS_COLOUN] = {0};  //for further design
+int game_area_sign[GAME_POS_ROW][GAME_POS_COLOUN] = {0};
 
+/*basic functions*/
 void move_cursor(int row, int col);
 void DrawSpace(int shape, int form, int x, int y);
 void DrawBlock(int shape, int form, int x, int y);
+
+/*initial functions*/
 void get_next_shape_of_current_block(struct Block *src, struct Block *dest);
 void InitBlockInfo();
 void clear_next_area();
@@ -67,14 +71,16 @@ void put_game_area_side_into_sign();
 void clear_line(int s, int e);
 void set_stdin_nonblocking();
 void reset_terminal_mode();
+
+/*game operation functions*/
 int check_keyboard_hit();
 void command_process(char command_input);
 void save_block_message(int block_index, int space_index, int block_row_position, int block_col_position);
-void update_game_score();
+void update_game_score(int score);
 void gameover_judgement();
 int score_and_gameover_judgement();
 void game_timer_handler(int sig);
-
+void command_input_and_process_in_time();
 int legal_judgement(int block_index, int space_index, int block_row_position, int block_col_position);
 
 void move_cursor(int row, int col) 
@@ -317,15 +323,15 @@ void save_block_message(int block_index, int space_index, int block_row_position
 		for (int j = 0; j < 4; j++)
 		{
 			if (block_to_shape[block_index][space_index].shape_to_space[i][j] == 1)
-				game_area_sign[block_row_position + i][block_col_position + j] = 1; //将该位置标记为有方块
+				game_area_sign[block_row_position + i][block_col_position + j] = 1; //sign this space as occupied
 		}
 	}
 }
 
-void update_game_score()
+void update_game_score(int score)
 {
     move_cursor(SCORE_POS_ROW,SCORE_POS_COLOUN * 2);
-    wprintf(L"score: %d\n", game_score);
+    wprintf(L"score: %d\n", score);
 }
 
 void gameover_judgement()
@@ -342,55 +348,79 @@ void gameover_judgement()
 	}
 }
 
+int move_blocks_down(int row_space_sum, int row_move_index, int space_move_index, int row_check_index)
+{
+	for (int j = 1; j < GAME_POS_COLOUN - 1; j++)
+	{
+		game_area_sign[row_check_index][j] = 0;
+		move_cursor(2 * j, row_check_index);
+		wprintf(L"  ");
+	}
+	//move all blocks and spaces above down falling 1 row
+	for (int row_move_index = row_check_index; row_move_index > 1; row_move_index --)
+	{
+		row_space_sum = 0;
+		for (int space_move_index = 1; space_move_index < GAME_POS_COLOUN - 1; space_move_index ++)
+		{
+			row_space_sum += game_area_sign[row_move_index - 1][space_move_index];
+			game_area_sign[row_move_index][space_move_index] = game_area_sign[row_move_index - 1][space_move_index];
+			if (game_area_sign[row_move_index][space_move_index] == 1)
+			{
+				move_cursor(row_move_index, space_move_index * 2 + 1);
+				wprintf(L"%lc%lc", BRICK, BRICK);
+			}
+			else
+			{
+				move_cursor(row_move_index, space_move_index * 2 + 1);
+				wprintf(L"  ");
+			}
+		}
+		if (row_space_sum == 0) //row move over
+			return 1;
+	}
+    return 0;
+}
+
+void row_block_shine(int row_check_index)
+{
+    int shine_loop = 0;
+    for (shine_loop = 0; shine_loop < 2; shine_loop ++)
+    {
+        move_cursor(row_check_index, 3);
+        wprintf(L"                    ");
+        usleep(200000);
+        for (int j = 1; j < GAME_POS_COLOUN - 1; j ++)  //recore block num of this row
+        {
+            move_cursor(row_check_index, 2 * j + 1);
+            wprintf(L"%lc%lc");
+        }
+        usleep(200000);
+    }
+}
+
 int score_and_gameover_judgement()
 {
-    int i = 0;
+    int row_check_index = 0;
     int j = 0;
     int row_space_sum = 0;  
     int row_move_index = 0;
     int space_move_index = 0;
+
 	//judge get score or not
-	for (i = GAME_POS_ROW - 1; i > 0; i--)
+	for (row_check_index = GAME_POS_ROW - 1; row_check_index > 0; row_check_index--)
 	{
 		row_space_sum = 0;
 		for (int j = 1; j < GAME_POS_COLOUN - 1; j ++)  //recore block num of this row
 		{
-			row_space_sum += game_area_sign[i][j];
+			row_space_sum += game_area_sign[row_check_index][j];
 		}
 		if (row_space_sum == 0)
 			break;
 		if (row_space_sum == GAME_POS_COLOUN - 2) //this row contains enough blocks
 		{
-			game_score += 100;
-            update_game_score();
-			for (int j = 1; j < GAME_POS_COLOUN - 1; j++)
-			{
-				game_area_sign[i][j] = 0;
-				move_cursor(2 * j, i);
-				wprintf(L"  ");
-			}
-			//move all blocks and spaces above down falling 1 row
-			for (int row_move_index = i; row_move_index > 1; row_move_index --)
-			{
-				row_space_sum = 0;
-				for (int space_move_index = 1; space_move_index < GAME_POS_COLOUN - 1; space_move_index ++)
-				{
-					row_space_sum += game_area_sign[row_move_index - 1][space_move_index];
-					game_area_sign[row_move_index][space_move_index] = game_area_sign[row_move_index - 1][space_move_index];
-					if (game_area_sign[row_move_index][space_move_index] == 1)
-					{
-						move_cursor(row_move_index, space_move_index * 2 + 1);
-						wprintf(L"%lc%lc", BRICK, BRICK);
-					}
-					else
-					{
-						move_cursor(row_move_index, space_move_index * 2 + 1);
-						wprintf(L"  ");
-					}
-				}
-				if (row_space_sum == 0) //row move over
-					return 1;
-			}
+            row_block_shine(row_check_index);
+			if(move_blocks_down(row_space_sum, row_move_index, space_move_index, row_check_index))
+                return 1;
 		}
 	}
     gameover_judgement();
@@ -400,30 +430,44 @@ int score_and_gameover_judgement()
 
 void game_timer_handler(int sig)  //timer handler function, process when game timer trigger 
 {
-    int row_position_temp = 0;
-    int col_position_temp = GAME_AREA_CENTER_COLOUN;
-    int space_index_temp = 0;
-    int t = 0;
-    fd_set readfds;
-    struct timeval game_timer_handler_timeval;
-    char command_input;
-    char arrow_input;
-    char direction_input;
-
-    // check stdin in every processing
-    FD_ZERO(&readfds);
-    FD_SET(STDIN_FILENO, &readfds);
-
-    game_timer_handler_timeval.tv_sec = 0;  // check stdin timer no waiting
-    game_timer_handler_timeval.tv_usec = 0;
-
-
+    int score_rows = 0;
 
     if (block_row_position != 0)
         DrawSpace(block_index, space_index, block_row_position - 1, block_col_position);
     DrawBlock(block_index, space_index, block_row_position, block_col_position);
 
+    if (legal_judgement(block_index, space_index, block_row_position + 1, block_col_position) == 0) 
+    {
+        game_score += 10;
+        update_game_score(game_score);
+        save_block_message(block_index, space_index, block_row_position, block_col_position);
+        block_index = next_block_index;
+        block_row_position = 1;
+        block_col_position = GAME_AREA_CENTER_COLOUN;
+        space_index = 0;
+        next_block_index = rand() % 7;
+        clear_next_area();
+        show_next_area(next_block_index);
+    }
+    while(score_and_gameover_judgement())
+    {
+        score_rows ++;
+    }
+    game_score += ((score_rows + 1) * score_rows / 2) * 100;
+    update_game_score(game_score);
 
+    block_row_position ++;
+}
+
+void command_input_and_process_in_time()
+{
+    // define command process
+    int row_position_temp = 0;
+    int col_position_temp = GAME_AREA_CENTER_COLOUN;
+    int space_index_temp = 0;
+    char command_input;
+    char arrow_input;
+    char direction_input;
 
     while (check_keyboard_hit())     // if input, read all inputs
     {
@@ -441,31 +485,13 @@ void game_timer_handler(int sig)  //timer handler function, process when game ti
         DrawSpace(block_index, space_index_temp, row_position_temp, col_position_temp);
         DrawBlock(block_index, space_index, block_row_position, block_col_position);
     }
-
-
-    if (legal_judgement(block_index, space_index, block_row_position + 1, block_col_position) == 0) 
-    {
-        game_score += 10;
-        update_game_score();
-        save_block_message(block_index, space_index, block_row_position, block_col_position);
-        block_index = next_block_index;
-        block_row_position = 1;
-        block_col_position = GAME_AREA_CENTER_COLOUN;
-        space_index = 0;
-        next_block_index = rand() % 7;
-        clear_next_area();
-        show_next_area(next_block_index);
-    }
-    while(score_and_gameover_judgement());
-    block_row_position ++;
 }
-
 
 int main() {
 
+    // define game timer
     struct itimerval game_timer;
 
-    // define timer
     signal(SIGALRM, game_timer_handler);
 
     game_timer.it_value.tv_sec = TIMER_INTERVAL;  // set timer initial time 1 second
@@ -495,9 +521,9 @@ int main() {
     block_index = rand() % 7;
     next_block_index = rand() % 7;
     show_next_area(next_block_index);
-    update_game_score();
+    update_game_score(game_score);
     while (1) {
-        pause();  // Puts the program into a pending state until a signal is received
+        command_input_and_process_in_time();
     }
 
     reset_terminal_mode();
